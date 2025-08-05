@@ -4,8 +4,8 @@
   "description": "BNB and USDT Deposit Tracking System",
   "main": "src/server.js",
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "nodemon src/server.js",
+    "start": "node api.js && node src/server.js",
+    "dev": "node api.js && nodemon src/server.js",
     "listener": "node src/listener.js",
     "listener:dev": "nodemon src/listener.js"
   },

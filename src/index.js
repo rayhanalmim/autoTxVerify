@@ -14,7 +14,8 @@ const {
     verifyRecentDeposits,
     validateDepositsByTransactions,
     getAnkrProvider,
-    Deposit
+    Deposit,
+    ArchivedDeposit
 } = require("./db");
 const { MORALIS_API_KEY_SECRET, GAS_PAYER_PRIVATE_KEY_SECRET, USDT_CONTRACT_ADDRESS_SECRET, ANKR_RPC_URL_SECRET, TREASURY_ADDRESS_SECRET } = require("./config");
 
@@ -364,11 +365,11 @@ async function processDeposits() {
     }
 }
 
-// Schedule the deposit processing task to run every minute
-cron.schedule('* * * * *', processDeposits);
+// Schedule the deposit processing task to run every 3 minutes
+cron.schedule('*/3 * * * *', processDeposits);
 
-// Schedule the treasury transfer task to run every minute
-cron.schedule('* * * * *', async () => {
+// Schedule the treasury transfer task to run every 3 minutes
+cron.schedule('*/3 * * * *', async () => {
     try {
         console.log('🏦 Starting periodic treasury transfer process...');
 
@@ -402,6 +403,55 @@ cron.schedule('* * * * *', async () => {
     }
 });
 
+// Function to move old pending deposits to archive
+async function archiveOldPendingDeposits() {
+    try {
+        const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+        
+        // Find old pending deposits
+        const oldPendingDeposits = await Deposit.find({
+            status: 'PENDING',
+            createdAt: { $lt: thirtyMinutesAgo }
+        });
+
+        // If no old deposits, return early
+        if (oldPendingDeposits.length === 0) {
+            console.log('🕰️ No old pending deposits to archive');
+            return;
+        }
+
+        // Prepare archived deposits
+        const archivedDeposits = oldPendingDeposits.map(deposit => ({
+            originalId: deposit._id,
+            userId: deposit.userId,
+            address: deposit.address,
+            privateKey: deposit.privateKey,
+            balance: deposit.balance,
+            tokenBalance: deposit.tokenBalance,
+            status: 'EXPIRED',
+            expectedAmount: deposit.expectedAmount,
+            usdtDeposited: deposit.usdtDeposited,
+            originalCreatedAt: deposit.createdAt
+        }));
+
+        // Insert into archived collection
+        await ArchivedDeposit.insertMany(archivedDeposits);
+
+        // Remove from original collection
+        await Deposit.deleteMany({
+            status: 'PENDING',
+            createdAt: { $lt: thirtyMinutesAgo }
+        });
+        
+        console.log(`🗄️ Archived ${archivedDeposits.length} old pending deposits`);
+    } catch (error) {
+        console.error('Error archiving old pending deposits:', error);
+    }
+}
+
+// Schedule the archive old pending deposits task to run every 3 minutes
+cron.schedule('*/3 * * * *', archiveOldPendingDeposits);
+
 const app = express();
 app.use(express.json());
 
@@ -421,6 +471,7 @@ app.post("/generate-deposit", async (req, res) => {
         // Check for existing pending deposit for this user
         const existingDeposit = await Deposit.findOne({
             userId,
+            status: 'PENDING'
         });
 
         if (existingDeposit) {
@@ -834,6 +885,8 @@ app.delete("/api/deposit/:depositId", async (req, res) => {
     try {
         const { depositId } = req.params;
         const { userId } = req.body;
+
+        console.log('hitttttttttt');
 
         if (!depositId) {
             return res.status(400).json({
